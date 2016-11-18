@@ -3,6 +3,7 @@ local type = type
 local tonumber = tonumber
 local ffi_c = ffi.C
 local ffi_new = ffi.new
+local ffi_cast = ffi.cast
 local ffi_gc = ffi.gc
 local ffi_string = ffi.string
 local ffi_typeof = ffi.typeof
@@ -21,6 +22,7 @@ ffi.cdef[[
 local maxsize = 4096
 local char_ptr_ptr = ffi_typeof('char *[1]')
 local sizet_ptr = ffi_typeof('size_t[1]')
+local iconv_open_err = ffi_cast('iconv_t', ffi_new('int', -1))
 
 local ok, new_tab = pcall(require, "table.new")
 if not ok then
@@ -28,7 +30,7 @@ if not ok then
 end
 
 local _M = new_tab(0, 8)
-_M._VERSION = '0.1.0'
+_M._VERSION = '0.1.1'
 
 local mt = { __index = _M }
 
@@ -41,18 +43,20 @@ function _M.new(self, to, from, _maxsize)
     end
     _maxsize = tonumber(_maxsize) or maxsize
     local ctx = ffi_c.iconv_open(to, from)
-    local err = ffi_errno()
-    if 0 == err then
+    if ctx == iconv_open_err then
+        ffi_c.iconv_close(ctx)
+        return nil, ('conversion from %s to %s is not supported'):format(from, to)
+    else
         ctx = ffi_gc(ctx, ffi_c.iconv_close)
+        local dst_len = ffi_new(sizet_ptr)
         local dst_buff = ffi_new(char_ptr_ptr)
         dst_buff[0] = ffi_new('char[' .. _maxsize .. ']')
         return setmetatable({
             ctx = ctx,
             maxsize = _maxsize,
+            dst_len = dst_len,
             dst_buff = dst_buff,
         }, mt)
-    else
-        return nil, ('conversion from %s to %s is not supported'):format(from, to)
     end
 end
 
@@ -66,7 +70,8 @@ function _M.convert(self, text)
         return nil, 'text required'
     end
     local maxsize = self.maxsize
-    local dst_len = ffi_new(sizet_ptr, maxsize)
+    local dst_len = self.dst_len
+    dst_len[0] = maxsize
     local dst_buff = self.dst_buff
         
     local src_len = ffi_new(sizet_ptr, #text)
