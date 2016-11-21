@@ -20,6 +20,7 @@ ffi.cdef[[
 ]]
 
 local maxsize = 4096
+local char_ptr = ffi_typeof('char *')
 local char_ptr_ptr = ffi_typeof('char *[1]')
 local sizet_ptr = ffi_typeof('size_t[1]')
 local iconv_open_err = ffi_cast('iconv_t', ffi_new('int', -1))
@@ -30,7 +31,7 @@ if not ok then
 end
 
 local _M = new_tab(0, 8)
-_M._VERSION = '0.1.1'
+_M._VERSION = '0.2.0'
 
 local mt = { __index = _M }
 
@@ -48,14 +49,11 @@ function _M.new(self, to, from, _maxsize)
         return nil, ('conversion from %s to %s is not supported'):format(from, to)
     else
         ctx = ffi_gc(ctx, ffi_c.iconv_close)
-        local dst_len = ffi_new(sizet_ptr)
-        local dst_buff = ffi_new(char_ptr_ptr)
-        dst_buff[0] = ffi_new('char[' .. _maxsize .. ']')
+        local buffer = ffi_new('char[' .. _maxsize .. ']')
         return setmetatable({
             ctx = ctx,
+            buffer = buffer,
             maxsize = _maxsize,
-            dst_len = dst_len,
-            dst_buff = dst_buff,
         }, mt)
     end
 end
@@ -70,20 +68,19 @@ function _M.convert(self, text)
         return nil, 'text required'
     end
     local maxsize = self.maxsize
-    local dst_len = self.dst_len
-    dst_len[0] = maxsize
-    local dst_buff = self.dst_buff
+    local buffer = self.buffer
+    
+    local dst_len = ffi_new(sizet_ptr, maxsize)
+    local dst_buff = ffi_new(char_ptr_ptr, ffi_cast(char_ptr, buffer))
         
     local src_len = ffi_new(sizet_ptr, #text)
     local src_buff = ffi_new(char_ptr_ptr)
     src_buff[0] = ffi_new('char['.. #text .. ']', text)
 
-    -- backup the dst_buff pointer, iconv will modify it
-    local _dst_buff = ffi_new(char_ptr_ptr, dst_buff)
-    local ok = ffi_c.iconv(ctx, src_buff, src_len, _dst_buff, dst_len)
+    local ok = ffi_c.iconv(ctx, src_buff, src_len, dst_buff, dst_len)
     if 0 <= ok then
         local len = maxsize - dst_len[0]
-        local dst = ffi_string(dst_buff[0], len)
+        local dst = ffi_string(buffer, len)
         return dst, tonumber(ok)
     else
         local err = ffi_errno()
